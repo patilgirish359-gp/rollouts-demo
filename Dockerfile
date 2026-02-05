@@ -1,15 +1,19 @@
-FROM golang:1.16 as build
-WORKDIR /go/src/app
+FROM golang:1.22-alpine AS build
+WORKDIR /src
 COPY . .
-RUN make
+# Build a static binary
+RUN apk add --no-cache git && \
+    CGO_ENABLED=0 GOOS=linux go build -o /out/rollouts-demo
 
-FROM scratch
+FROM gcr.io/distroless/base-debian12:nonroot
+WORKDIR /app
 COPY *.html ./
 COPY *.png ./
 COPY *.js ./
 COPY *.ico ./
 COPY *.css ./
-COPY --from=build /go/src/app/rollouts-demo /rollouts-demo
+COPY *.map ./
+COPY --from=build /out/rollouts-demo /app/rollouts-demo
 
 ARG COLOR
 ENV COLOR=${COLOR}
@@ -18,4 +22,6 @@ ENV ERROR_RATE=${ERROR_RATE}
 ARG LATENCY
 ENV LATENCY=${LATENCY}
 
-ENTRYPOINT [ "/rollouts-demo" ]
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/app/rollouts-demo"]

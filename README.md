@@ -5,6 +5,84 @@ various deployment strategies and progressive delivery features of Argo Rollouts
 
 ![img](./demo.png)
 
+## Challenge Deployment (EKS canary)
+
+### Images and Dockerfile
+
+- Images (built from source, non-root, distroless):
+  - `girish514/rollouts-demo:v1.0` → header `ARGO ROLLOUTS DEMO` (baseline UI).
+  - `girish514/rollouts-demo:v2.0` → header `ARGO ROLLOUTS DEMO!!` (canary target UI).
+- Dockerfile hardened: multi-stage Go build, distroless runtime, `USER nonroot`, exposes `8080`.
+- Relevant manifests:
+  - `k8s/rollout-canary.yaml` – Argo Rollouts `Rollout` (canary strategy).
+  - `k8s/service.yaml` – stable `LoadBalancer` service + internal canary service.
+  - `k8s/ingress.yaml` – NGINX ingress, host `rollouts-demo.example.com` (map to your DNS or use the AWS ELB hostname directly).
+
+### Chosen strategy – Canary (high level)
+
+- **Canary Rollout** gradually shifts traffic from v1.0 (`DEMO`) to v2.0 (`DEMO!!`):
+  - Step 1: send 20% of traffic to the new ReplicaSet, pause 60 seconds.
+  - Step 2: send 50% of traffic, pause 60 seconds.
+  - Step 3: promote to 100% if healthy.
+- Rollout uses:
+  - Stable and canary services for traffic splitting.
+  - NGINX ingress canary created/managed by Argo Rollouts.
+  - HTTP readiness and liveness probes on `/` and `/healthz` for resilience.
+
+### Deploy baseline (v1.0)
+```bash
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/rollout-canary.yaml
+kubectl apply -f k8s/ingress.yaml
+kubectl get rollout rollouts-demo
+```
+
+### Start canary to v2.0
+```bash
+# Without kubectl plugin
+kubectl patch rollout/rollouts-demo --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"rollouts-demo","image":"girish514/rollouts-demo:v2.0"}]}}}}'
+
+# Observe
+kubectl describe rollout rollouts-demo
+kubectl get ingress rollouts-demo
+```
+Steps: weight 20% → pause 60s → 50% → pause 60s → 100%. Traffic is shifted via NGINX ingress canary created by the controller.
+
+### Demonstrate failure and rollback
+```bash
+# Simulate a bad version (fails probe)
+kubectl patch rollout/rollouts-demo --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"rollouts-demo","image":"girish514/rollouts-demo:nonexistent"}]}}}}'
+
+# After it pauses/fails, rollback to last stable (v2.0 or v1.0)
+kubectl patch rollout/rollouts-demo --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"rollouts-demo","image":"girish514/rollouts-demo:v1.0"}]}}}}'
+```
+If you install the kubectl plugin: `kubectl argo rollouts abort rollouts-demo` or `kubectl argo rollouts undo rollouts-demo`.
+
+### AWS/EKS mapping
+- **Compute**: EKS managed node groups run the application pods; Argo Rollouts controller runs in `argo-rollouts` namespace.
+- **Container registry**: Docker Hub in this demo (`girish514/rollouts-demo`), equivalent to **ECR** in a production EKS setup.
+- **Traffic exposure**:
+  - `Service rollouts-demo` is `type: LoadBalancer`, which provisions an AWS NLB/CLB.
+  - `Ingress` can instead be configured for **AWS Load Balancer Controller (ALB)** by switching `ingressClassName` to `alb` and using `trafficRouting.alb` in the Rollout.
+- **Resilience and HA**:
+  - Replica count and HPA (if enabled) provide high availability across nodes.
+  - Readiness/liveness probes feed into Kubernetes self-healing and Argo Rollouts’ health assessment.
+- **Observability (optional)**:
+  - Analysis templates can hook into Prometheus, CloudWatch, or other metrics providers for automated canary analysis (not required for this assignment).
+
+### Short demo script (<= 5 minutes)
+```bash
+kubectl apply -f k8s/service.yaml -f k8s/rollout-canary.yaml -f k8s/ingress.yaml
+kubectl get rollout rollouts-demo
+kubectl patch rollout/rollouts-demo --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"rollouts-demo","image":"girish514/rollouts-demo:v2.0"}]}}}}'
+kubectl describe rollout rollouts-demo
+# curl the ingress host to see UI header change; watch during weight shifts
+# simulate failure then rollback:
+kubectl patch rollout/rollouts-demo --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"rollouts-demo","image":"girish514/rollouts-demo:nonexistent"}]}}}}'
+kubectl describe rollout rollouts-demo
+kubectl patch rollout/rollouts-demo --type merge -p '{"spec":{"template":{"spec":{"containers":[{"name":"rollouts-demo","image":"girish514/rollouts-demo:v1.0"}]}}}}'
+```
+
 ## Examples
 
 The following examples are provided:
