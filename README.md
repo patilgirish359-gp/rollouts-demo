@@ -2,7 +2,7 @@
 
 This repo contains the application source, Dockerfile, and Kubernetes manifests for an **Argo Rollouts canary deployment** on EKS. Two app versions are used: **v1.0** (header: *ARGO ROLLOUTS DEMO*) and **v2.0** (header: *ARGO ROLLOUTS DEMO!!*).
 
-![Demo app](docs/demo-screenshot.png)
+![Demo app](docs/Demo.png)
 
 ---
 
